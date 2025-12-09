@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Fond e-ink grisâtre avec texture -->
+  <defs>
+    <filter id="noise">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" />
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="discrete" tableValues="0.05"/>
+      </feComponentTransfer>
+    </filter>
+  </defs>
+  
+  <!-- Background e-ink -->
+  <rect width="512" height="512" fill="#ebe8e0" rx="112"/>
+  <rect width="512" height="512" fill="#ebe8e0" filter="url(#noise)" rx="112"/>
+  
+  <!-- Texte E-Ink avec Georgia (même police que l'app) -->
+  <text x="256" y="305" 
+        font-family="Georgia, 'Times New Roman', serif" 
+        font-size="130" 
+        font-weight="600"
+        fill="#1a1a1a" 
+        text-anchor="middle"
+        letter-spacing="-3"
+        style="font-variant: normal;">E-Ink</text>
+</svg>

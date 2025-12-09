@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Lecteur E-ink">
+  <meta name="theme-color" content="#ebe8e0">
+  <link rel="manifest" href="manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="E-ink">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <title>Lecteur E-ink</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: Georgia, serif; 
+      background: #ebe8e0;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    #app { 
+      height: 100vh;
+      height: 100dvh;
+      display: flex; 
+      flex-direction: column;
+      position: relative;
+    }
+    .eink-texture {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.15;
+      z-index: 1;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><filter id="noise"><feTurbulence baseFrequency="0.9" numOctaves="4"/></filter><rect width="200" height="200" filter="url(%23noise)" opacity="0.3"/></svg>');
+      background-repeat: repeat;
+    }
+    .warmth-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      mix-blend-mode: multiply;
+      z-index: 2;
+    }
+    .content { 
+      position: relative; 
+      z-index: 10;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      padding-top: max(1rem, env(safe-area-inset-top));
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      flex-shrink: 0;
+    }
+    .header-title { 
+      font-size: 1.25rem; 
+      display: flex; 
+      align-items: center; 
+      gap: 0.5rem;
+      font-weight: 600;
+    }
+    .header-buttons {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid rgba(0,0,0,0.2);
+      background: rgba(0,0,0,0.05);
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .btn:active { opacity: 0.7; transform: scale(0.98); }
+    .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .icon-btn {
+      padding: 0.5rem;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 4px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon-btn:active { background: rgba(0,0,0,0.1); }
+    .badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      background: #3b82f6;
+      color: white;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .settings-panel {
+      padding: 1rem;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      display: none;
+      flex-shrink: 0;
+    }
+    .settings-panel.active { display: block; }
+    .setting-group {
+      margin-bottom: 1rem;
+    }
+    .setting-group:last-child { margin-bottom: 0; }
+    .setting-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    .quick-modes {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .quick-modes button {
+      flex: 1;
+      padding: 0.75rem 0.5rem;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: #666;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid rgba(0,0,0,0.2);
+      border-radius: 4px;
+      background: #f8f6f0;
+      font-family: inherit;
+      font-size: 1rem;
+    }
+    .library {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 1.5rem;
+      min-height: 0;
+    }
+    .upload-zone {
+      border: 2px dashed rgba(0,0,0,0.3);
+      background: rgba(0,0,0,0.05);
+      padding: 2rem 1rem;
+      text-align: center;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 1.5rem;
+    }
+    .upload-zone:active { opacity: 0.8; }
+    .books-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 1rem;
+    }
+    @media (min-width: 640px) {
+      .books-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+    }
+    .book-card {
+      background: #f8f6f0;
+      border: 1px solid rgba(0,0,0,0.2);
+      border-radius: 8px;
+      padding: 1rem;
+      position: relative;
+    }
+    .book-cover {
+      height: 120px;
+      background: rgba(0,0,0,0.05);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 0.75rem;
+      opacity: 0.3;
+    }
+    .book-title {
+      font-weight: 600;
+      font-size: 0.875rem;
+      margin-bottom: 0.25rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .book-author, .book-meta {
+      font-size: 0.75rem;
+      opacity: 0.7;
+      margin-bottom: 0.25rem;
+    }
+    .delete-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: rgba(0,0,0,0.1);
+      border: none;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+    .progress-badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+    .progress-badge.finished { background: #4ade80; color: #000; }
+    .progress-badge.reading { background: #fbbf24; color: #000; }
+    .reader-view {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 2rem 1rem;
+      min-height: 0;
+    }
+    .reader-content {
+      max-width: 40rem;
+      margin: 0 auto;
+    }
+    .chapter-title {
+      font-size: 1.5rem;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .text-content {
+      text-align: justify;
+      hyphens: auto;
+      -webkit-hyphens: auto;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .text-content p {
+      margin-bottom: 1rem;
+    }
+    .text-content p:first-letter {
+      font-size: 2.5em;
+      font-weight: bold;
+      float: left;
+      margin-right: 0.1em;
+      line-height: 0.9;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem;
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+      border-top: 1px solid rgba(0,0,0,0.1);
+      flex-shrink: 0;
+      gap: 0.5rem;
+    }
+    .page-info {
+      font-size: 0.875rem;
+      text-align: center;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      opacity: 0.7;
+    }
+    .transition-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      pointer-events: none;
+      z-index: 100;
+      opacity: 0;
+    }
+    .transition-overlay.active {
+      animation: einkFlash 300ms ease-in-out;
+    }
+    @keyframes einkFlash {
+      0% { opacity: 0; }
+      30% { opacity: 0.85; }
+      100% { opacity: 0; }
+    }
+    .hidden { display: none !important; }
+    .search-panel {
+      padding: 1rem;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      flex-shrink: 0;
+    }
+    .search-input-group {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .search-input-group input { flex: 1; }
+    .search-results {
+      max-height: 200px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .search-result-item {
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      background: #f8f6f0;
+    }
+    .search-result-item.active { background: #fbbf24; }
+    .search-result-item:active { opacity: 0.8; }
+    .search-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+      font-size: 0.875rem;
+    }
+    .search-nav-buttons {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    mark { border-radius: 2px; padding: 2px 4px; }
+    .spinner {
+      border: 3px solid rgba(0,0,0,0.1);
+      border-top: 3px solid rgba(0,0,0,0.6);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+      margin: 0 auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .bookmarks-list {
+      max-height: 300px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .bookmark-item {
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #f8f6f0;
+      font-size: 0.875rem;
+    }
+    .bookmark-item:active { opacity: 0.8; }
+    .bookmark-chapter {
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+    .bookmark-preview {
+      font-style: italic;
+      opacity: 0.7;
+    }
+    /* SVG Icons */
+    .icon {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+    .icon-sm {
+      width: 20px;
+      height: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="eink-texture"></div>
+    <div class="warmth-overlay" id="warmthOverlay"></div>
+    <div class="transition-overlay" id="transitionOverlay"></div>
+    <div class="content" id="content"></div>
+  </div>
+
+  <!-- SVG Icon Definitions -->
+  <svg style="display: none;">
+    <defs>
+      <symbol id="icon-library" viewBox="0 0 24 24">
+        <path d="m16 6 4 14" /><path d="M12 6v14" /><path d="M8 8v12" /><path d="M4 4v16" />
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24">
+        <path d="m15 18-6-6 6-6" />
+      </symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="icon-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41-1.41" /><path d="m19.07 4.93-1.41 1.41" />
+      </symbol>
+      <symbol id="icon-sunset" viewBox="0 0 24 24">
+        <path d="M12 10V2" /><path d="m4.93 10.93 1.41 1.41" /><path d="M2 18h2" /><path d="M20 18h2" /><path d="m19.07 10.93-1.41 1.41" /><path d="M22 22H2" /><path d="m16 6-4 4-4-4" /><path d="M16 18a4 4 0 0 0-8 0" />
+      </symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="icon-upload" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" x2="12" y1="3" y2="15" />
+      </symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24">
+        <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />
+      </symbol>
+      <symbol id="icon-bookmark" viewBox="0 0 24 24">
+        <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+      </symbol>
+      <symbol id="icon-book-marked" viewBox="0 0 24 24">
+        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /><polyline points="10 2 10 10 13 7 16 10 16 2" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+      </symbol>
+      <symbol id="icon-book-open" viewBox="0 0 24 24">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" /><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+      </symbol>
+    </defs>
+  </svg>
+
+  <script>
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    }
+    
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js')
+          .then(reg => console.log('[PWA] Service Worker OK'))
+          .catch(err => console.log('[PWA] SW Error:', err));
+      });
+    }
+    
+    // Icon helper function
+    function icon(name, className = '') {
+      return `<svg class="icon ${className}"><use href="#icon-${name}"></use></svg>`;
+    }
+    
+    const app = {
+      view: 'library',
+      library: [],
+      currentBook: null,
+      currentPage: 0,
+      bookProgress: {},
+      bookmarks: {},
+      searchResults: [],
+      currentSearchIndex: 0,
+      searchTerm: '',
+      settings: { fontSize: 18, lineHeight: 1.6, lighting: 85, warmth: 0 },
+      showSettings: false,
+      showBookmarks: false,
+      showSearch: false,
+      isLoading: false,
+      touchStart: null
+    };
+    
+    function loadStorage(key, def) {
+      try { return JSON.parse(localStorage.getItem(key)) || def; } catch { return def; }
+    }
+    function saveStorage(key, val) {
+      try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+    }
+    
+    app.library = loadStorage('eink-library', []);
+    app.bookProgress = loadStorage('eink-progress', {});
+    app.bookmarks = loadStorage('eink-bookmarks', {});
+    app.settings = loadStorage('eink-settings', app.settings);
+    
+    async function parseTXT(file) {
+      const text = await file.text();
+      const paragraphs = text.split(/\n\n+/).filter(p => p.trim());
+      const pages = [];
+      let currentPageText = '', wordCount = 0;
+      for (const para of paragraphs) {
+        const words = para.split(/\s+/).length;
+        if (wordCount + words > 500 && currentPageText) {
+          pages.push({ chapter: `Page ${pages.length + 1}`, text: currentPageText.trim() });
+          currentPageText = para + '\n\n';
+          wordCount = words;
+        } else {
+          currentPageText += para + '\n\n';
+          wordCount += words;
+        }
+      }
+      if (currentPageText) pages.push({ chapter: `Page ${pages.length + 1}`, text: currentPageText.trim() });
+      return { title: file.name.replace('.txt', ''), author: 'Inconnu', format: 'TXT', content: pages, dateAdded: new Date().toISOString() };
+    }
+    
+    async function parseEPUB(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const zip = await JSZip.loadAsync(arrayBuffer);
+      let title = file.name.replace('.epub', ''), author = 'Inconnu';
+      const opfFiles = Object.keys(zip.files).filter(n => n.endsWith('.opf'));
+      if (opfFiles.length > 0) {
+        const opf = await zip.file(opfFiles[0]).async('string');
+        const tm = opf.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/i);
+        const am = opf.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i);
+        if (tm) title = tm[1];
+        if (am) author = am[1];
+      }
+      const htmlFiles = Object.keys(zip.files)
+        .filter(n => (n.endsWith('.html') || n.endsWith('.xhtml')) && !n.includes('nav') && !n.includes('toc'))
+        .sort();
+      const allPages = [];
+      for (const fname of htmlFiles) {
+        const html = await zip.file(fname).async('string');
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        doc.querySelectorAll('script, style').forEach(el => el.remove());
+        const h1 = doc.querySelector('h1, h2, h3');
+        const chapterTitle = h1 ? h1.textContent.trim() : `Chapitre ${allPages.length + 1}`;
+        const paras = Array.from(doc.querySelectorAll('p')).map(p => p.textContent.trim()).filter(t => t.length > 0);
+        if (paras.length === 0) continue;
+        let currentPageText = '', wordCount = 0, pageNum = 1;
+        for (const para of paras) {
+          const words = para.split(/\s+/).length;
+          if (wordCount + words > 500 && currentPageText) {
+            allPages.push({ chapter: pageNum === 1 ? chapterTitle : `${chapterTitle} (${pageNum})`, text: currentPageText.trim() });
+            currentPageText = para + '\n\n';
+            wordCount = words;
+            pageNum++;
+          } else {
+            currentPageText += para + '\n\n';
+            wordCount += words;
+          }
+        }
+        if (currentPageText.trim()) {
+          allPages.push({ chapter: pageNum === 1 ? chapterTitle : `${chapterTitle} (${pageNum})`, text: currentPageText.trim() });
+        }
+      }
+      return { title, author, format: 'EPUB', content: allPages, dateAdded: new Date().toISOString() };
+    }
+    
+    async function parsePDF(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pages = [];
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        let pageText = '', lastY = null;
+        for (const item of textContent.items) {
+          if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) pageText += '\n';
+          pageText += item.str + ' ';
+          lastY = item.transform[5];
+        }
+        const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const paragraphs = [];
+        let currentParagraph = '';
+        for (const line of lines) {
+          if (currentParagraph) {
+            const lastChar = currentParagraph.trim().slice(-1);
+            if (['.', '!', '?', ':', ';'].includes(lastChar)) {
+              paragraphs.push(currentParagraph.trim());
+              currentParagraph = line;
+            } else {
+              currentParagraph += ' ' + line;
+            }
+          } else {
+            currentParagraph = line;
+          }
+        }
+        if (currentParagraph) paragraphs.push(currentParagraph.trim());
+        const formatted = paragraphs.join('\n\n');
+        if (formatted.trim()) pages.push({ chapter: `Page ${pageNum}`, text: formatted });
+      }
+      return { title: file.name.replace('.pdf', ''), author: 'Inconnu', format: 'PDF', content: pages, dateAdded: new Date().toISOString() };
+    }
+    
+    async function handleFileImport(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      app.isLoading = true;
+      render();
+      try {
+        let bookData;
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (ext === 'txt') bookData = await parseTXT(file);
+        else if (ext === 'epub') bookData = await parseEPUB(file);
+        else if (ext === 'pdf') bookData = await parsePDF(file);
+        else throw new Error('Format non supporté');
+        bookData.id = Date.now().toString();
+        app.library.push(bookData);
+        saveStorage('eink-library', app.library);
+      } catch (error) {
+        alert('Erreur: ' + error.message);
+      } finally {
+        app.isLoading = false;
+        e.target.value = '';
+        render();
+      }
+    }
+    
+    function openBook(bookId) {
+      app.currentBook = app.library.find(b => b.id === bookId);
+      app.currentPage = app.bookProgress[bookId]?.currentPage || 0;
+      app.view = 'reader';
+      app.showSearch = false;
+      app.showBookmarks = false;
+      app.searchResults = [];
+      render();
+    }
+    
+    function closeBook() {
+      if (app.currentBook) {
+        app.bookProgress[app.currentBook.id] = {
+          currentPage: app.currentPage,
+          totalPages: app.currentBook.content.length,
+          lastRead: new Date().toISOString()
+        };
+        saveStorage('eink-progress', app.bookProgress);
+      }
+      app.view = 'library';
+      app.currentBook = null;
+      render();
+    }
+    
+    function deleteBook(bookId) {
+      if (!confirm('Supprimer ce livre ?')) return;
+      app.library = app.library.filter(b => b.id !== bookId);
+      delete app.bookProgress[bookId];
+      delete app.bookmarks[bookId];
+      saveStorage('eink-library', app.library);
+      saveStorage('eink-progress', app.bookProgress);
+      saveStorage('eink-bookmarks', app.bookmarks);
+      render();
+    }
+    
+    function einkTransition(callback) {
+      document.getElementById('transitionOverlay').classList.add('active');
+      setTimeout(() => {
+        callback();
+        setTimeout(() => document.getElementById('transitionOverlay').classList.remove('active'), 300);
+      }, 150);
+    }
+    
+    function nextPage() {
+      if (!app.currentBook || app.currentPage >= app.currentBook.content.length - 1) return;
+      einkTransition(() => {
+        app.currentPage++;
+        app.bookProgress[app.currentBook.id] = { currentPage: app.currentPage, totalPages: app.currentBook.content.length };
+        saveStorage('eink-progress', app.bookProgress);
+        render();
+        document.querySelector('.reader-view')?.scrollTo(0, 0);
+      });
+    }
+    
+    function prevPage() {
+      if (app.currentPage <= 0) return;
+      einkTransition(() => {
+        app.currentPage--;
+        app.bookProgress[app.currentBook.id] = { currentPage: app.currentPage, totalPages: app.currentBook.content.length };
+        saveStorage('eink-progress', app.bookProgress);
+        render();
+        document.querySelector('.reader-view')?.scrollTo(0, 0);
+      });
+    }
+    
+    function performSearch() {
+      if (!app.currentBook || !app.searchTerm.trim()) return;
+      const results = [];
+      const searchPattern = app.searchTerm.toLowerCase();
+      let globalOccurrence = 0;
+      app.currentBook.content.forEach((page, pageIdx) => {
+        const text = page.text;
+        const lower = text.toLowerCase();
+        let pos = 0;
+        let found = lower.indexOf(searchPattern, pos);
+        while (found !== -1) {
+          const start = Math.max(0, found - 50);
+          const end = Math.min(text.length, found + app.searchTerm.length + 50);
+          const context = text.substring(start, end);
+          results.push({
+            pageIndex: pageIdx,
+            chapter: page.chapter,
+            context: (start > 0 ? '...' : '') + context + (end < text.length ? '...' : ''),
+            occurrenceNumber: globalOccurrence
+          });
+          globalOccurrence++;
+          pos = found + 1;
+          found = lower.indexOf(searchPattern, pos);
+        }
+      });
+      app.searchResults = results;
+      app.currentSearchIndex = 0;
+      if (results.length > 0) goToSearchResult(0);
+      else render();
+    }
+    
+    function goToSearchResult(idx) {
+      if (idx < 0 || idx >= app.searchResults.length) return;
+      app.currentSearchIndex = idx;
+      const result = app.searchResults[idx];
+      if (result.pageIndex !== app.currentPage) {
+        app.currentPage = result.pageIndex;
+        render();
+        setTimeout(() => highlightSearchTerm(idx), 200);
+      } else {
+        highlightSearchTerm(idx);
+      }
+    }
+    
+    function highlightSearchTerm(searchIdx) {
+      const textContent = document.querySelector('.text-content');
+      if (!textContent || !app.searchTerm || app.searchResults.length === 0) return;
+      const currentResult = app.searchResults[searchIdx];
+      if (!currentResult || currentResult.pageIndex !== app.currentPage) return;
+      const targetOccurrence = currentResult.occurrenceNumber;
+      let occurrenceCounter = 0;
+      for (let i = 0; i < app.currentPage; i++) {
+        const pageText = app.currentBook.content[i].text.toLowerCase();
+        const pattern = app.searchTerm.toLowerCase();
+        let pos = 0;
+        let found = pageText.indexOf(pattern, pos);
+        while (found !== -1) {
+          occurrenceCounter++;
+          pos = found + 1;
+          found = pageText.indexOf(pattern, pos);
+        }
+      }
+      const paragraphs = textContent.querySelectorAll('p');
+      paragraphs.forEach(p => {
+        const text = p.textContent;
+        const regex = new RegExp(`(${app.searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+        const highlighted = text.replace(regex, (match) => {
+          const isTarget = occurrenceCounter === targetOccurrence;
+          occurrenceCounter++;
+          const bg = isTarget ? '#fbbf24' : '#fef3c7';
+          const border = isTarget ? '2px solid #f59e0b' : 'none';
+          const weight = isTarget ? '700' : 'normal';
+          return `<mark data-occ="${occurrenceCounter - 1}" style="background:${bg};padding:2px 4px;border:${border};border-radius:2px;font-weight:${weight};">${match}</mark>`;
+        });
+        p.innerHTML = highlighted;
+      });
+      const targetMark = textContent.querySelector(`mark[data-occ="${targetOccurrence}"]`);
+      if (targetMark) setTimeout(() => targetMark.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+    }
+    
+    function clearSearch() {
+      app.searchTerm = '';
+      app.searchResults = [];
+      app.currentSearchIndex = 0;
+      app.showSearch = false;
+      const textContent = document.querySelector('.text-content');
+      if (textContent) {
+        textContent.querySelectorAll('p').forEach(p => p.innerHTML = p.textContent);
+      }
+      render();
+    }
+    
+    function toggleBookmark() {
+      if (!app.currentBook) return;
+      const sel = window.getSelection();
+      const text = sel.toString().trim();
+      if (!text) { alert('Sélectionnez du texte'); return; }
+      const bookId = app.currentBook.id;
+      const bookmarks = app.bookmarks[bookId] || [];
+      const existing = bookmarks.findIndex(b => b.page === app.currentPage && b.selectedText === text);
+      if (existing >= 0) {
+        bookmarks.splice(existing, 1);
+      } else {
+        const preview = text.length > 50 ? text.substring(0, 50) + '...' : text;
+        bookmarks.push({
+          page: app.currentPage,
+          chapter: app.currentBook.content[app.currentPage].chapter,
+          selectedText: text,
+          preview,
+          timestamp: new Date().toISOString()
+        });
+        bookmarks.sort((a, b) => a.page - b.page);
+      }
+      app.bookmarks[bookId] = bookmarks;
+      saveStorage('eink-bookmarks', app.bookmarks);
+      sel.removeAllRanges();
+      render();
+    }
+    
+    function getCurrentBookmarks() {
+      return app.currentBook ? (app.bookmarks[app.currentBook.id] || []) : [];
+    }
+    
+    function applySettings() {
+      document.getElementById('app').style.filter = `brightness(${app.settings.lighting}%)`;
+      document.getElementById('warmthOverlay').style.backgroundColor = 
+        `rgba(255, 200, 150, ${app.settings.warmth / 100 * 0.4})`;
+      const textContent = document.querySelector('.text-content');
+      if (textContent) {
+        textContent.style.fontSize = app.settings.fontSize + 'px';
+        textContent.style.lineHeight = app.settings.lineHeight;
+      }
+      saveStorage('eink-settings', app.settings);
+    }
+    
+    function render() {
+      const content = document.getElementById('content');
+      applySettings();
+      
+      if (app.view === 'library') {
+        content.innerHTML = `
+          <div class="header">
+            <div class="header-title">${icon('library')} Ma Bibliothèque</div>
+            <button class="icon-btn" onclick="app.showSettings = !app.showSettings; render();">${icon('settings')}</button>
+          </div>
+          
+          ${app.showSettings ? `
+          <div class="settings-panel active">
+            <div class="setting-group">
+              <label>Modes rapides</label>
+              <div class="quick-modes">
+                <button class="btn" onclick="app.settings.lighting=85;app.settings.warmth=0;render();">${icon('sun', 'icon-sm')} Jour</button>
+                <button class="btn" onclick="app.settings.lighting=65;app.settings.warmth=75;render();">${icon('sunset', 'icon-sm')} Nuit</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <label>Éclairage: ${app.settings.lighting}%</label>
+              <input type="range" min="40" max="100" value="${app.settings.lighting}" 
+                oninput="app.settings.lighting=parseInt(this.value);render();">
+            </div>
+            <div class="setting-group">
+              <label>Chaleur: ${app.settings.warmth}%</label>
+              <input type="range" min="0" max="100" value="${app.settings.warmth}" 
+                oninput="app.settings.warmth=parseInt(this.value);render();">
+            </div>
+          </div>` : ''}
+          
+          <div class="library">
+            <div class="upload-zone" onclick="document.getElementById('fileInput').click();">
+              ${icon('upload')}
+              <div style="font-weight:600;margin-top:0.5rem;">Importer un livre</div>
+              <div style="font-size:0.875rem;opacity:0.7;margin-top:0.25rem;">(EPUB, PDF, TXT)</div>
+              <input type="file" id="fileInput" accept=".epub,.pdf,.txt" onchange="handleFileImport(event)" style="display:none;">
+            </div>
+            
+            ${app.isLoading ? '<div style="text-align:center;"><div class="spinner"></div></div>' : ''}
+            
+            ${app.library.length === 0 ? `
+              <div class="empty-state">
+                ${icon('book-open')}
+                <p style="margin-top:1rem;">Votre bibliothèque est vide</p>
+              </div>
+            ` : `
+              <div class="books-grid">
+                ${app.library.map(book => {
+                  const progress = app.bookProgress[book.id];
+                  const pct = progress ? Math.round((progress.currentPage / progress.totalPages) * 100) : 0;
+                  const isStarted = progress && progress.currentPage > 0;
+                  const isFinished = progress && progress.currentPage === progress.totalPages - 1;
+                  return `
+                    <div class="book-card">
+                      <button class="delete-btn" onclick="event.stopPropagation();deleteBook('${book.id}')">${icon('trash', 'icon-sm')}</button>
+                      <div class="book-cover">${icon('book-open')}</div>
+                      ${isStarted ? `<div class="progress-badge ${isFinished ? 'finished' : 'reading'}">
+                        ${isFinished ? '✓ Terminé' : `En cours - ${pct}%`}
+                      </div>` : ''}
+                      <div class="book-title">${book.title}</div>
+                      <div class="book-author">${book.author}</div>
+                      <div class="book-meta">${book.format} • ${book.content.length} pages</div>
+                      ${progress ? `<div class="book-meta">Page ${progress.currentPage + 1}/${progress.totalPages}</div>` : ''}
+                      <button class="btn" style="width:100%;margin-top:0.5rem;" onclick="openBook('${book.id}')">
+                        ${isStarted && !isFinished ? 'Continuer' : isFinished ? 'Relire' : 'Lire'}
+                      </button>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `}
+          </div>
+        `;
+      } else {
+        const bookmarks = getCurrentBookmarks();
+        content.innerHTML = `
+          <div class="header">
+            <button class="btn" onclick="closeBook()">${icon('chevron-left', 'icon-sm')} Bibliothèque</button>
+            <div class="header-buttons">
+              <button class="icon-btn" onclick="app.showSearch=!app.showSearch;render();">${icon('search')}</button>
+              <button class="icon-btn" onclick="toggleBookmark()">${icon('bookmark')}</button>
+              <button class="icon-btn" onclick="app.showBookmarks=!app.showBookmarks;render();">
+                ${icon('book-marked')}
+                ${bookmarks.length > 0 ? `<span class="badge">${bookmarks.length}</span>` : ''}
+              </button>
+              <button class="icon-btn" onclick="app.showSettings=!app.showSettings;render();">${icon('settings')}</button>
+            </div>
+          </div>
+          
+          ${app.showSearch ? `
+          <div class="search-panel">
+            <div class="search-input-group">
+              <input type="text" value="${app.searchTerm}" placeholder="Rechercher..." 
+                oninput="app.searchTerm=this.value" 
+                onkeydown="if(event.key==='Enter')performSearch()">
+              <button class="btn" onclick="performSearch()">Chercher</button>
+              <button class="icon-btn" onclick="clearSearch()">${icon('x')}</button>
+            </div>
+            ${app.searchResults.length > 0 ? `
+              <div class="search-nav">
+                <span>${app.searchResults.length} résultat(s)</span>
+                <div class="search-nav-buttons">
+                  <button class="icon-btn" onclick="goToSearchResult(app.currentSearchIndex-1)" 
+                    ${app.currentSearchIndex === 0 ? 'disabled' : ''}>${icon('chevron-left', 'icon-sm')}</button>
+                  <span>${app.currentSearchIndex + 1}/${app.searchResults.length}</span>
+                  <button class="icon-btn" onclick="goToSearchResult(app.currentSearchIndex+1)" 
+                    ${app.currentSearchIndex === app.searchResults.length - 1 ? 'disabled' : ''}>${icon('chevron-right', 'icon-sm')}</button>
+                </div>
+              </div>
+              <div class="search-results">
+                ${app.searchResults.map((r, i) => `
+                  <div class="search-result-item ${i === app.currentSearchIndex ? 'active' : ''}" 
+                    onclick="goToSearchResult(${i})">
+                    <div class="bookmark-chapter">${r.chapter} (Résultat ${i + 1})</div>
+                    <div class="bookmark-preview">${r.context}</div>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>` : ''}
+          
+          ${app.showBookmarks ? `
+          <div class="settings-panel active">
+            <h3 style="margin-bottom:1rem;font-weight:600;">Marque-pages</h3>
+            ${bookmarks.length === 0 ? '<p style="opacity:0.7;font-size:0.875rem;">Aucun marque-page</p>' : `
+              <div class="bookmarks-list">
+                ${bookmarks.map(bm => `
+                  <div class="bookmark-item" onclick="app.currentPage=${bm.page};app.showBookmarks=false;render();">
+                    <div class="bookmark-chapter">${bm.chapter}</div>
+                    <div class="bookmark-preview">"${bm.preview}"</div>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </div>` : ''}
+          
+          ${app.showSettings ? `
+          <div class="settings-panel active">
+            <div class="setting-group">
+              <label>Taille: ${app.settings.fontSize}px</label>
+              <input type="range" min="14" max="28" value="${app.settings.fontSize}" 
+                oninput="app.settings.fontSize=parseInt(this.value);render();">
+            </div>
+            <div class="setting-group">
+              <label>Interligne: ${app.settings.lineHeight.toFixed(1)}</label>
+              <input type="range" min="1.3" max="2.0" step="0.1" value="${app.settings.lineHeight}" 
+                oninput="app.settings.lineHeight=parseFloat(this.value);render();">
+            </div>
+          </div>` : ''}
+          
+          <div class="reader-view">
+            ${app.currentBook ? `
+              <div class="reader-content">
+                <div class="chapter-title">${app.currentBook.content[app.currentPage].chapter}</div>
+                <div class="text-content" style="font-size:${app.settings.fontSize}px;line-height:${app.settings.lineHeight};">
+                  ${app.currentBook.content[app.currentPage].text.split('\n\n').map(p => `<p>${p}</p>`).join('')}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          
+          <div class="footer">
+            <button class="btn" onclick="prevPage()" ${app.currentPage === 0 ? 'disabled' : ''}>${icon('chevron-left', 'icon-sm')} Précédent</button>
+            <div class="page-info">Page ${app.currentPage + 1} / ${app.currentBook?.content.length || 0}</div>
+            <button class="btn" onclick="nextPage()" 
+              ${!app.currentBook || app.currentPage === app.currentBook.content.length - 1 ? 'disabled' : ''}>Suivant ${icon('chevron-right', 'icon-sm')}</button>
+          </div>
+        `;
+      }
+    }
+    
+    render();
+  </script>
+</body>
+</html>
