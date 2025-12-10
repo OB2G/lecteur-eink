@@ -282,7 +282,8 @@
       -webkit-user-select: text !important;
       user-select: text !important;
     }
-    .text-content p:first-letter {
+    /* Lettrine uniquement sur le PREMIER paragraphe de la page */
+    .text-content p:first-of-type:first-letter {
       font-size: 2.5em;
       font-weight: bold;
       float: left;
@@ -503,7 +504,8 @@
       showBookmarks: false,
       showSearch: false,
       isLoading: false,
-      touchStart: null
+      touchStart: null,
+      selectedText: '' // Stocker la sélection
     };
     
     function loadStorage(key, def) {
@@ -542,20 +544,70 @@
       const arrayBuffer = await file.arrayBuffer();
       const zip = await JSZip.loadAsync(arrayBuffer);
       let title = file.name.replace('.epub', ''), author = 'Inconnu';
+      
+      // Lire les métadonnées et l'ordre des chapitres depuis .opf
       const opfFiles = Object.keys(zip.files).filter(n => n.endsWith('.opf'));
-      if (opfFiles.length > 0) {
-        const opf = await zip.file(opfFiles[0]).async('string');
-        const tm = opf.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/i);
-        const am = opf.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i);
-        if (tm) title = tm[1].trim();
-        if (am) author = am[1].trim();
+      if (opfFiles.length === 0) {
+        throw new Error('Fichier EPUB invalide : pas de fichier .opf');
       }
-      const htmlFiles = Object.keys(zip.files)
-        .filter(n => (n.endsWith('.html') || n.endsWith('.xhtml')) && !n.includes('nav') && !n.includes('toc') && !n.includes('cover'))
-        .sort();
+      
+      const opfPath = opfFiles[0];
+      const opfDir = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+      const opf = await zip.file(opfPath).async('string');
+      
+      // Métadonnées
+      const tm = opf.match(/<dc:title[^>]*>([^<]+)<\/dc:title>/i);
+      const am = opf.match(/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i);
+      if (tm) title = tm[1].trim();
+      if (am) author = am[1].trim();
+      
+      // Lire le SPINE (ordre des chapitres)
+      const spineMatch = opf.match(/<spine[^>]*>([\s\S]*?)<\/spine>/i);
+      if (!spineMatch) {
+        throw new Error('EPUB invalide : pas de spine');
+      }
+      
+      const itemrefs = [...spineMatch[1].matchAll(/<itemref[^>]*idref=["']([^"']+)["']/gi)]
+        .map(m => m[1]);
+      
+      // Créer une map des IDs vers les fichiers
+      const manifest = {};
+      const manifestMatch = opf.match(/<manifest[^>]*>([\s\S]*?)<\/manifest>/i);
+      if (manifestMatch) {
+        const items = [...manifestMatch[1].matchAll(/<item[^>]*id=["']([^"']+)["'][^>]*href=["']([^"']+)["']/gi)];
+        for (const item of items) {
+          manifest[item[1]] = item[2];
+        }
+      }
+      
+      // Construire la liste des fichiers dans l'ordre du spine
+      const orderedFiles = [];
+      for (const idref of itemrefs) {
+        if (manifest[idref]) {
+          const href = manifest[idref];
+          // Résoudre le chemin relatif
+          let fullPath = opfDir + href;
+          // Nettoyer le chemin
+          fullPath = fullPath.replace(/\/\.\//g, '/').replace(/\/[^\/]+\/\.\.\//g, '/');
+          orderedFiles.push(fullPath);
+        }
+      }
+      
+      // Si pas de spine, fallback sur tri alphabétique
+      const htmlFiles = orderedFiles.length > 0 ? orderedFiles : 
+        Object.keys(zip.files)
+          .filter(n => {
+            const lower = n.toLowerCase();
+            return (lower.endsWith('.html') || lower.endsWith('.xhtml')) 
+              && !lower.includes('nav.xhtml')
+              && !lower.includes('toc.xhtml')
+              && !n.startsWith('__MACOSX');
+          })
+          .sort();
+      
       const allPages = [];
       
-      // Fonction récursive pour extraire TOUT le texte
+      // Fonction récursive pour extraire tout le texte
       function extractText(element) {
         let text = '';
         for (const node of element.childNodes) {
@@ -565,7 +617,7 @@
           } else if (node.nodeType === 1) { // ELEMENT_NODE
             const tagName = node.tagName.toLowerCase();
             if (['script', 'style', 'meta', 'link'].includes(tagName)) continue;
-            if (['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li'].includes(tagName)) {
+            if (['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName)) {
               const extracted = extractText(node);
               if (extracted.trim()) text += extracted.trim() + '\n\n';
             } else {
@@ -576,43 +628,76 @@
         return text;
       }
       
+      // Parcourir les fichiers dans l'ordre du spine
       for (const fname of htmlFiles) {
-        const html = await zip.file(fname).async('string');
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        doc.querySelectorAll('script, style, meta, link').forEach(el => el.remove());
-        const h1 = doc.querySelector('h1, h2, h3, h4');
-        const chapterTitle = h1 ? h1.textContent.trim() : `Chapitre ${allPages.length + 1}`;
-        const body = doc.querySelector('body');
-        if (!body) continue;
-        
-        const fullText = extractText(body);
-        const paragraphs = fullText.split('\n\n').map(p => p.trim()).filter(p => p.length > 10);
-        if (paragraphs.length === 0) continue;
-        
-        let currentPageText = '', wordCount = 0, pageNum = 1;
-        for (const para of paragraphs) {
-          const words = para.split(/\s+/).filter(w => w.length > 0).length;
-          if (wordCount + words > 500 && currentPageText) {
-            allPages.push({ chapter: pageNum === 1 ? chapterTitle : `${chapterTitle} (${pageNum})`, text: currentPageText.trim() });
-            currentPageText = para + '\n\n';
-            wordCount = words;
-            pageNum++;
-          } else {
-            currentPageText += para + '\n\n';
-            wordCount += words;
+        try {
+          const zipFile = zip.file(fname);
+          if (!zipFile) continue;
+          
+          const html = await zipFile.async('string');
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          doc.querySelectorAll('script, style, meta, link').forEach(el => el.remove());
+          
+          // Détecter le titre du chapitre
+          const h1 = doc.querySelector('h1, h2, h3, h4, .chapter-title, [class*="title"]');
+          const chapterTitle = h1 ? h1.textContent.trim() : `Chapitre ${allPages.length + 1}`;
+          
+          const body = doc.querySelector('body');
+          if (!body) continue;
+          
+          const fullText = extractText(body);
+          const paragraphs = fullText.split('\n\n')
+            .map(p => p.trim())
+            .filter(p => p.length > 20); // Au moins 20 caractères
+          
+          if (paragraphs.length === 0) continue;
+          
+          // Paginer en respectant le chapitre
+          let currentPageText = '', wordCount = 0, pageNum = 1;
+          
+          for (const para of paragraphs) {
+            const words = para.split(/\s+/).filter(w => w.length > 0).length;
+            
+            // Découpage à 800 mots OU fin du chapitre
+            if (wordCount + words > 800 && currentPageText) {
+              allPages.push({ 
+                chapter: pageNum === 1 ? chapterTitle : `${chapterTitle} (${pageNum})`, 
+                text: currentPageText.trim() 
+              });
+              currentPageText = para + '\n\n';
+              wordCount = words;
+              pageNum++;
+            } else {
+              currentPageText += para + '\n\n';
+              wordCount += words;
+            }
           }
-        }
-        if (currentPageText.trim()) {
-          allPages.push({ chapter: pageNum === 1 ? chapterTitle : `${chapterTitle} (${pageNum})`, text: currentPageText.trim() });
+          
+          // Ajouter la dernière page du chapitre
+          if (currentPageText.trim()) {
+            allPages.push({ 
+              chapter: pageNum === 1 ? chapterTitle : `${chapterTitle} (${pageNum})`, 
+              text: currentPageText.trim() 
+            });
+          }
+        } catch (err) {
+          console.log('Erreur lecture fichier:', fname, err);
+          continue;
         }
       }
       
       if (allPages.length === 0) {
-        throw new Error('Impossible de lire ce fichier EPUB. Le format n\'est peut-être pas standard.');
+        throw new Error('Impossible de lire ce fichier EPUB. Aucun contenu trouvé.');
       }
       
-      return { title, author, format: 'EPUB', content: allPages, dateAdded: new Date().toISOString() };
+      return { 
+        title, 
+        author, 
+        format: 'EPUB', 
+        content: allPages, 
+        dateAdded: new Date().toISOString() 
+      };
     }
     
     async function parsePDF(file) {
@@ -833,16 +918,37 @@
     }
     
     function toggleBookmark() {
-      if (!app.currentBook) return;
-      const sel = window.getSelection();
-      const text = sel.toString().trim();
+      if (!app.currentBook) {
+        alert('⚠️ Aucun livre ouvert');
+        return;
+      }
+      
+      // Essayer d'abord la méthode standard
+      let sel = window.getSelection();
+      let text = sel.toString().trim();
+      
+      // Si vide, utiliser la sélection stockée
+      if (!text && app.selectedText) {
+        text = app.selectedText;
+      }
+      
+      // Si toujours vide, essayer de récupérer depuis le DOM
+      if (!text) {
+        const selection = document.getSelection();
+        if (selection && selection.rangeCount > 0) {
+          text = selection.toString().trim();
+        }
+      }
+      
       if (!text) { 
-        alert('📖 Sélectionnez du texte d\'abord !\n\nAppuyez longuement sur un mot, puis ajustez la sélection avec les poignées bleues.');
+        alert('📖 Sélectionnez du texte d\'abord !\n\n1. Appuyez longuement sur un mot\n2. Ajustez avec les poignées bleues\n3. Touchez à nouveau l\'icône 🔖');
         return; 
       }
+      
       const bookId = app.currentBook.id;
       const bookmarks = app.bookmarks[bookId] || [];
       const existing = bookmarks.findIndex(b => b.page === app.currentPage && b.selectedText === text);
+      
       if (existing >= 0) {
         bookmarks.splice(existing, 1);
         alert('🗑️ Marque-page supprimé');
@@ -856,11 +962,18 @@
           timestamp: new Date().toISOString()
         });
         bookmarks.sort((a, b) => a.page - b.page);
-        alert('✅ Marque-page créé !');
+        alert('✅ Marque-page créé !\n\n"' + preview + '"');
       }
+      
       app.bookmarks[bookId] = bookmarks;
       saveStorage('eink-bookmarks', app.bookmarks);
-      sel.removeAllRanges();
+      
+      // Désélectionner
+      if (sel && sel.removeAllRanges) {
+        sel.removeAllRanges();
+      }
+      app.selectedText = '';
+      
       render();
     }
     
@@ -1104,6 +1217,14 @@
     observer.observe(document.getElementById('content'), {
       childList: true,
       subtree: true
+    });
+    
+    // Écouter les changements de sélection (pour marque-pages iOS)
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      if (sel && sel.toString().trim()) {
+        app.selectedText = sel.toString().trim();
+      }
     });
   </script>
 </body>
