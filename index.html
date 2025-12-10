@@ -692,38 +692,45 @@
           // RÉCUPÉRER LE TITRE DEPUIS LE TOC
           let chapterTitle = chapterTitles[fname] || '';
           
+          console.log('📖 Titre depuis TOC:', chapterTitle || '(non trouvé)');
+          
           // Si pas dans le TOC, essayer de trouver dans le HTML
+          if (!chapterTitle) {
+            // Chercher un numéro simple dans les premiers éléments
+            const firstParagraphs = doc.querySelectorAll('p.calibre_5, p[class*="chapter"], h1, h2, h3');
+            for (const el of firstParagraphs) {
+              const text = el.textContent.trim();
+              // Si c'est juste un numéro ou "Chapitre X"
+              if (/^(\d+|[IVXLCDM]+|Chapitre\s+\d+|Prologue|Épilogue|Partie\s+[IVXLCDM]+)$/i.test(text)) {
+                chapterTitle = text;
+                console.log('📖 Titre trouvé dans HTML:', chapterTitle);
+                break;
+              }
+            }
+          }
+          
+          // Si toujours pas, chercher dans tous les titres
           if (!chapterTitle) {
             const titleElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
             for (const el of titleElements) {
               const text = el.textContent.trim();
-              if (text.length > chapterTitle.length) {
-                chapterTitle = text;
+              // Ignorer le titre du livre
+              if (text !== title && text.length > 0 && text.length < 50) {
+                if (text.length > chapterTitle.length) {
+                  chapterTitle = text;
+                }
               }
-            }
-          }
-          
-          // Si toujours pas de titre, regarder dans les classes
-          if (!chapterTitle) {
-            const specialElements = doc.querySelectorAll('.chapter-title, .chapter, .title, [class*="chapter"], [class*="titre"]');
-            for (const el of specialElements) {
-              const text = el.textContent.trim();
-              if (text.length > chapterTitle.length) {
-                chapterTitle = text;
-              }
-            }
-          }
-          
-          // Dernier recours : balise title
-          if (!chapterTitle) {
-            const titleTag = doc.querySelector('title');
-            if (titleTag) {
-              chapterTitle = titleTag.textContent.trim();
             }
           }
           
           chapterTitle = chapterTitle.replace(/\s+/g, ' ').trim();
-          console.log('📖 Titre:', chapterTitle || '(sans titre)');
+          
+          // Si on n'a toujours rien, laisser vide plutôt que le titre du livre
+          if (!chapterTitle || chapterTitle === title) {
+            chapterTitle = '';
+          }
+          
+          console.log('📖 TITRE FINAL:', chapterTitle || '(sans titre)');
           
           const body = doc.querySelector('body');
           if (!body) {
@@ -747,9 +754,21 @@
           }, 0);
           
           console.log('📊 Mots:', totalWords);
-          console.log('📄 Pages attendues (~500 mots):', Math.ceil(totalWords / 500));
           
-          // DÉCOUPER EN PAGES DE 500 MOTS
+          // SI LE CHAPITRE EST COURT (< 100 mots), LE GARDER INTACT
+          if (totalWords < 100) {
+            console.log('📄 Chapitre court → 1 page (pas de découpage)');
+            allPages.push({
+              chapter: chapterTitle,
+              text: paragraphs.join('\n\n')
+            });
+            console.log('✅ 1 page créée (chapitre court)');
+            continue;
+          }
+          
+          // SINON, DÉCOUPER EN PAGES DE 200 MOTS
+          console.log('📄 Pages attendues (~200 mots):', Math.ceil(totalWords / 200));
+          
           let currentPageText = '';
           let wordCount = 0;
           let pageCount = 0;
@@ -757,7 +776,7 @@
           for (const para of paragraphs) {
             const words = para.split(/\s+/).filter(w => w.length > 0).length;
             
-            if (wordCount + words > 500 && currentPageText) {
+            if (wordCount + words > 200 && currentPageText) {
               pageCount++;
               allPages.push({ 
                 chapter: chapterTitle, 
