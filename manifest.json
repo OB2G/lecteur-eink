@@ -1,28 +1,30 @@
 {
   "name": "Lecteur E-ink",
   "short_name": "E-ink",
-  "description": "Lecteur de livres numérique avec effet e-ink. Supporte EPUB, PDF et TXT.",
-  "start_url": "/",
+  "description": "Lecteur de livres numériques avec effet e-ink",
+  "start_url": "./",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#ebe8e0",
   "theme_color": "#ebe8e0",
+  "orientation": "portrait",
   "icons": [
     {
-      "src": "icon-192.png",
-      "sizes": "192x192",
+      "src": "./icon-180.png",
+      "sizes": "180x180",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "icon-512.png",
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
-  ],
-  "categories": ["books", "education", "productivity"],
-  "lang": "fr-FR",
-  "dir": "ltr",
-  "scope": "/"
+  ]
 }

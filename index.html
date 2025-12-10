@@ -251,6 +251,13 @@
       font-weight: bold;
       text-align: center;
       margin-bottom: 2rem;
+      color: #1a1a1a;
+      /* Effet E-ink sur les titres aussi */
+      text-shadow: 
+        0 0 0.3px rgba(0,0,0,0.15),
+        0 0 0.5px rgba(0,0,0,0.1);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
     .text-content {
       text-align: justify;
@@ -258,6 +265,16 @@
       -webkit-hyphens: auto;
       user-select: text;
       -webkit-user-select: text;
+      color: #1a1a1a;
+      /* Effet E-ink : flou subtil comme sur un Kindle */
+      text-shadow: 
+        0 0 0.3px rgba(0,0,0,0.15),
+        0 0 0.5px rgba(0,0,0,0.1);
+      /* Anti-aliasing doux pour simuler l'encre électronique */
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      /* Légère augmentation du contraste */
+      filter: contrast(1.05);
     }
     .text-content p {
       margin-bottom: 1rem;
@@ -996,7 +1013,58 @@
       }
     }
     
+    // Fonction pour attacher les événements tactiles
+    function attachTouchEvents() {
+      const readerView = document.querySelector('.reader-view');
+      if (!readerView || app.view !== 'reader') return;
+      
+      let touchStartX = null;
+      let touchStartY = null;
+      
+      readerView.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+      }, { passive: true });
+      
+      readerView.addEventListener('touchend', (e) => {
+        if (!touchStartX || !touchStartY) return;
+        
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        
+        const deltaX = touchEndX - touchStartX;
+        const deltaY = touchEndY - touchStartY;
+        
+        // Vérifier que c'est un swipe horizontal (pas vertical)
+        if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
+          if (deltaX > 0) {
+            // Swipe vers la droite = page précédente
+            prevPage();
+          } else {
+            // Swipe vers la gauche = page suivante
+            nextPage();
+          }
+        }
+        
+        touchStartX = null;
+        touchStartY = null;
+      }, { passive: true });
+    }
+    
+    // Render initial
     render();
+    
+    // Observer les changements pour attacher les événements tactiles
+    const observer = new MutationObserver(() => {
+      if (app.view === 'reader') {
+        attachTouchEvents();
+      }
+    });
+    
+    observer.observe(document.getElementById('content'), {
+      childList: true,
+      subtree: true
+    });
   </script>
 </body>
 </html>
