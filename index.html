@@ -561,6 +561,51 @@
       if (tm) title = tm[1].trim();
       if (am) author = am[1].trim();
       
+      console.log('=== DÉBUT PARSING EPUB ===');
+      console.log('Titre:', title);
+      console.log('Auteur:', author);
+      
+      // LIRE LE TOC (toc.ncx) pour avoir les VRAIS titres de chapitres
+      const tocFiles = Object.keys(zip.files).filter(n => n.endsWith('toc.ncx'));
+      let chapterTitles = {};
+      
+      if (tocFiles.length > 0) {
+        console.log('✓ TOC trouvé:', tocFiles[0]);
+        const tocContent = await zip.file(tocFiles[0]).async('string');
+        const tocParser = new DOMParser();
+        const tocDoc = tocParser.parseFromString(tocContent, 'text/xml');
+        
+        // Extraire tous les navPoints (chapitres)
+        const navPoints = tocDoc.querySelectorAll('navPoint');
+        console.log('Chapitres trouvés dans TOC:', navPoints.length);
+        
+        navPoints.forEach((nav, index) => {
+          const labelEl = nav.querySelector('navLabel text');
+          const contentEl = nav.querySelector('content');
+          
+          if (labelEl && contentEl) {
+            const chapterTitle = labelEl.textContent.trim();
+            let href = contentEl.getAttribute('src');
+            
+            // Enlever l'ancre (#...) si présente
+            if (href.includes('#')) {
+              href = href.split('#')[0];
+            }
+            
+            // Résoudre le chemin (peut être relatif au TOC)
+            const tocDir = tocFiles[0].substring(0, tocFiles[0].lastIndexOf('/') + 1);
+            if (tocDir && !href.startsWith('/')) {
+              href = tocDir + href;
+            }
+            
+            chapterTitles[href] = chapterTitle;
+            console.log(`  ${index + 1}. "${chapterTitle}" → ${href}`);
+          }
+        });
+      } else {
+        console.log('⚠️ Pas de TOC trouvé');
+      }
+      
       // Lire le SPINE (ordre des chapitres)
       const spineMatch = opf.match(/<spine[^>]*>([\s\S]*?)<\/spine>/i);
       if (!spineMatch) {
@@ -603,6 +648,8 @@
           })
           .sort();
       
+      console.log('\nFichiers à traiter:', htmlFiles.length);
+      
       const allPages = [];
       
       // Fonction récursive pour extraire tout le texte
@@ -627,32 +674,36 @@
       }
       
       // Parcourir les fichiers dans l'ordre du spine
-      // CHAQUE FICHIER = 1 CHAPITRE
       for (const fname of htmlFiles) {
         try {
+          console.log('\n--- Fichier:', fname);
+          
           const zipFile = zip.file(fname);
-          if (!zipFile) continue;
+          if (!zipFile) {
+            console.log('⚠️ Non trouvé');
+            continue;
+          }
           
           const html = await zipFile.async('string');
           const parser = new DOMParser();
           const doc = parser.parseFromString(html, 'text/html');
           doc.querySelectorAll('script, style, meta, link').forEach(el => el.remove());
           
-          // GARDER LE VRAI TITRE COMPLET DU CHAPITRE
-          // Chercher dans plusieurs endroits possibles
-          let chapterTitle = '';
+          // RÉCUPÉRER LE TITRE DEPUIS LE TOC
+          let chapterTitle = chapterTitles[fname] || '';
           
-          // 1. Chercher dans les balises de titre (h1-h6)
-          const titleElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
-          for (const el of titleElements) {
-            const text = el.textContent.trim();
-            // Garder le plus long titre trouvé (souvent le vrai titre de chapitre)
-            if (text.length > chapterTitle.length) {
-              chapterTitle = text;
+          // Si pas dans le TOC, essayer de trouver dans le HTML
+          if (!chapterTitle) {
+            const titleElements = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            for (const el of titleElements) {
+              const text = el.textContent.trim();
+              if (text.length > chapterTitle.length) {
+                chapterTitle = text;
+              }
             }
           }
           
-          // 2. Chercher dans les classes spéciales
+          // Si toujours pas de titre, regarder dans les classes
           if (!chapterTitle) {
             const specialElements = doc.querySelectorAll('.chapter-title, .chapter, .title, [class*="chapter"], [class*="titre"]');
             for (const el of specialElements) {
@@ -663,7 +714,7 @@
             }
           }
           
-          // 3. Chercher dans le <title> de la page
+          // Dernier recours : balise title
           if (!chapterTitle) {
             const titleTag = doc.querySelector('title');
             if (titleTag) {
@@ -671,33 +722,48 @@
             }
           }
           
-          // Nettoyer le titre (enlever sauts de ligne multiples, espaces excessifs)
           chapterTitle = chapterTitle.replace(/\s+/g, ' ').trim();
+          console.log('📖 Titre:', chapterTitle || '(sans titre)');
           
           const body = doc.querySelector('body');
-          if (!body) continue;
+          if (!body) {
+            console.log('⚠️ Pas de body');
+            continue;
+          }
           
           const fullText = extractText(body);
           const paragraphs = fullText.split('\n\n')
             .map(p => p.trim())
             .filter(p => p.length > 20);
           
-          if (paragraphs.length === 0) continue;
+          if (paragraphs.length === 0) {
+            console.log('⚠️ Pas de contenu');
+            continue;
+          }
           
-          // DÉCOUPER CE CHAPITRE EN PAGES DE 500 MOTS
+          // Compter les mots
+          const totalWords = paragraphs.reduce((sum, p) => {
+            return sum + p.split(/\s+/).filter(w => w.length > 0).length;
+          }, 0);
+          
+          console.log('📊 Mots:', totalWords);
+          console.log('📄 Pages attendues (~500 mots):', Math.ceil(totalWords / 500));
+          
+          // DÉCOUPER EN PAGES DE 500 MOTS
           let currentPageText = '';
           let wordCount = 0;
+          let pageCount = 0;
           
           for (const para of paragraphs) {
             const words = para.split(/\s+/).filter(w => w.length > 0).length;
             
-            // Découpage à 500 mots
             if (wordCount + words > 500 && currentPageText) {
-              // Créer une page avec le MÊME titre de chapitre
+              pageCount++;
               allPages.push({ 
                 chapter: chapterTitle, 
                 text: currentPageText.trim() 
               });
+              console.log(`  ✓ Page ${pageCount}: ${wordCount} mots`);
               currentPageText = para + '\n\n';
               wordCount = words;
             } else {
@@ -706,18 +772,42 @@
             }
           }
           
-          // Ajouter la dernière page du chapitre
+          // Dernière page
           if (currentPageText.trim()) {
+            pageCount++;
             allPages.push({ 
               chapter: chapterTitle, 
               text: currentPageText.trim() 
             });
+            console.log(`  ✓ Page ${pageCount} (fin): ${wordCount} mots`);
           }
+          
+          console.log(`✅ ${pageCount} pages créées`);
+          
         } catch (err) {
-          console.log('Erreur lecture fichier:', fname, err);
+          console.log('❌ Erreur:', err);
           continue;
         }
       }
+      
+      console.log('\n=== FIN PARSING ===');
+      console.log('📚 TOTAL:', allPages.length, 'pages');
+      
+      // Afficher résumé
+      const uniqueChapters = [];
+      const seen = new Set();
+      allPages.forEach(p => {
+        if (!seen.has(p.chapter)) {
+          seen.add(p.chapter);
+          uniqueChapters.push(p.chapter);
+        }
+      });
+      
+      console.log('\n📑 Chapitres:');
+      uniqueChapters.forEach((ch, i) => {
+        const count = allPages.filter(p => p.chapter === ch).length;
+        console.log(`  ${i + 1}. "${ch}" (${count} pages)`);
+      });
       
       if (allPages.length === 0) {
         throw new Error('Impossible de lire ce fichier EPUB. Aucun contenu trouvé.');
