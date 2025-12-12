@@ -282,14 +282,6 @@
       -webkit-user-select: text !important;
       user-select: text !important;
     }
-    /* Lettrine uniquement sur le PREMIER paragraphe de la page */
-    .text-content p:first-of-type:first-letter {
-      font-size: 2.5em;
-      font-weight: bold;
-      float: left;
-      margin-right: 0.1em;
-      line-height: 0.9;
-    }
     .footer {
       display: flex;
       justify-content: space-between;
@@ -385,10 +377,11 @@
       -webkit-overflow-scrolling: touch;
     }
     .bookmark-item {
+      display: flex;
+      align-items: flex-start;
       padding: 0.75rem;
       margin-bottom: 0.5rem;
       border-radius: 4px;
-      cursor: pointer;
       background: #f8f6f0;
       font-size: 0.875rem;
     }
@@ -760,7 +753,8 @@
             console.log('📄 Chapitre court → 1 page (pas de découpage)');
             allPages.push({
               chapter: chapterTitle,
-              text: paragraphs.join('\n\n')
+              text: paragraphs.join('\n\n'),
+              isFirstPageOfChapter: true
             });
             console.log('✅ 1 page créée (chapitre court)');
             continue;
@@ -780,7 +774,8 @@
               pageCount++;
               allPages.push({ 
                 chapter: chapterTitle, 
-                text: currentPageText.trim() 
+                text: currentPageText.trim(),
+                isFirstPageOfChapter: pageCount === 1
               });
               console.log(`  ✓ Page ${pageCount}: ${wordCount} mots`);
               currentPageText = para + '\n\n';
@@ -796,7 +791,8 @@
             pageCount++;
             allPages.push({ 
               chapter: chapterTitle, 
-              text: currentPageText.trim() 
+              text: currentPageText.trim(),
+              isFirstPageOfChapter: pageCount === 1
             });
             console.log(`  ✓ Page ${pageCount} (fin): ${wordCount} mots`);
           }
@@ -1095,15 +1091,25 @@
         alert('🗑️ Marque-page supprimé');
       } else {
         const preview = text.length > 50 ? text.substring(0, 50) + '...' : text;
+        
+        // Demander une annotation optionnelle
+        const note = prompt('📝 Ajouter une note ? (optionnel)\n\nMarque-page : "' + preview + '"', '');
+        
         bookmarks.push({
           page: app.currentPage,
           chapter: app.currentBook.content[app.currentPage].chapter,
           selectedText: text,
           preview,
+          note: note || '',
           timestamp: new Date().toISOString()
         });
         bookmarks.sort((a, b) => a.page - b.page);
-        alert('✅ Marque-page créé !\n\n"' + preview + '"');
+        
+        if (note) {
+          alert('✅ Marque-page avec note créé !');
+        } else {
+          alert('✅ Marque-page créé !\n\n"' + preview + '"');
+        }
       }
       
       app.bookmarks[bookId] = bookmarks;
@@ -1120,6 +1126,19 @@
     
     function getCurrentBookmarks() {
       return app.currentBook ? (app.bookmarks[app.currentBook.id] || []) : [];
+    }
+    
+    function deleteBookmark(index) {
+      if (!app.currentBook) return;
+      if (!confirm('Supprimer ce marque-page ?')) return;
+      
+      const bookId = app.currentBook.id;
+      const bookmarks = app.bookmarks[bookId] || [];
+      bookmarks.splice(index, 1);
+      
+      app.bookmarks[bookId] = bookmarks;
+      saveStorage('eink-bookmarks', app.bookmarks);
+      render();
     }
     
     function applySettings() {
@@ -1262,10 +1281,17 @@
             <h3 style="margin-bottom:1rem;font-weight:600;">Marque-pages</h3>
             ${bookmarks.length === 0 ? '<p style="opacity:0.7;font-size:0.875rem;">Aucun marque-page</p>' : `
               <div class="bookmarks-list">
-                ${bookmarks.map(bm => `
-                  <div class="bookmark-item" onclick="app.currentPage=${bm.page};app.showBookmarks=false;render();">
-                    <div class="bookmark-chapter">${bm.chapter}</div>
-                    <div class="bookmark-preview">"${bm.preview}"</div>
+                ${bookmarks.map((bm, idx) => `
+                  <div class="bookmark-item">
+                    <div onclick="app.currentPage=${bm.page};app.showBookmarks=false;render();" style="flex:1;cursor:pointer;">
+                      <div class="bookmark-chapter">${bm.chapter}</div>
+                      <div class="bookmark-preview">"${bm.preview}"</div>
+                      ${bm.note ? `<div style="margin-top:0.5rem;font-size:0.875rem;color:#666;font-style:italic;">📝 ${bm.note}</div>` : ''}
+                    </div>
+                    <button class="icon-btn" onclick="event.stopPropagation();deleteBookmark(${idx})" 
+                      style="margin-left:0.5rem;color:#dc2626;" title="Supprimer">
+                      ${icon('trash-2', 'icon-sm')}
+                    </button>
                   </div>
                 `).join('')}
               </div>
@@ -1289,7 +1315,8 @@
           <div class="reader-view">
             ${app.currentBook ? `
               <div class="reader-content">
-                <div class="chapter-title">${app.currentBook.content[app.currentPage].chapter}</div>
+                ${app.currentBook.content[app.currentPage].isFirstPageOfChapter ? 
+                  `<div class="chapter-title">${app.currentBook.content[app.currentPage].chapter}</div>` : ''}
                 <div class="text-content" style="font-size:${app.settings.fontSize}px;line-height:${app.settings.lineHeight};">
                   ${app.currentBook.content[app.currentPage].text.split('\n\n').map(p => `<p>${p}</p>`).join('')}
                 </div>
