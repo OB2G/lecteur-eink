@@ -1141,6 +1141,9 @@
       render();
     }
     
+    // Exposer la fonction globalement pour qu'elle soit accessible depuis le HTML
+    window.deleteBookmark = deleteBookmark;
+    
     function applySettings() {
       document.getElementById('app').style.filter = `brightness(${app.settings.lighting}%)`;
       document.getElementById('warmthOverlay').style.backgroundColor = 
@@ -1283,14 +1286,15 @@
               <div class="bookmarks-list">
                 ${bookmarks.map((bm, idx) => `
                   <div class="bookmark-item">
-                    <div onclick="app.currentPage=${bm.page};app.showBookmarks=false;render();" style="flex:1;cursor:pointer;">
+                    <div class="bookmark-content" data-page="${bm.page}" style="flex:1;cursor:pointer;">
                       <div class="bookmark-chapter">${bm.chapter}</div>
                       <div class="bookmark-preview">"${bm.preview}"</div>
                       ${bm.note ? `<div style="margin-top:0.5rem;font-size:0.875rem;color:#666;font-style:italic;">📝 ${bm.note}</div>` : ''}
                     </div>
-                    <button class="icon-btn" onclick="event.stopPropagation();deleteBookmark(${idx})" 
-                      style="margin-left:0.5rem;color:#dc2626;" title="Supprimer">
-                      ${icon('trash-2', 'icon-sm')}
+                    <button class="btn delete-bookmark-btn" data-index="${idx}" 
+                      style="margin-left:0.5rem;background:#dc2626;color:white;padding:0.5rem;font-size:0.75rem;white-space:nowrap;" 
+                      title="Supprimer">
+                      Supprimer
                     </button>
                   </div>
                 `).join('')}
@@ -1332,6 +1336,27 @@
           </div>
         `;
       }
+      
+      // Attacher les événements pour les boutons de suppression de marque-pages
+      setTimeout(() => {
+        document.querySelectorAll('.delete-bookmark-btn').forEach(btn => {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const index = parseInt(this.getAttribute('data-index'));
+            deleteBookmark(index);
+          });
+        });
+        
+        // Attacher les événements pour cliquer sur les marque-pages
+        document.querySelectorAll('.bookmark-content').forEach(content => {
+          content.addEventListener('click', function() {
+            const page = parseInt(this.getAttribute('data-page'));
+            app.currentPage = page;
+            app.showBookmarks = false;
+            render();
+          });
+        });
+      }, 0);
     }
     
     // Fonction pour attacher les événements tactiles
