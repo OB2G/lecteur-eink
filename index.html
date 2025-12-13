@@ -821,9 +821,17 @@
           }
           
           const fullText = extractText(body);
-          const paragraphs = fullText.split('\n\n')
+          let paragraphs = fullText.split('\n\n')
             .map(p => p.trim())
             .filter(p => p.length > 0);  // Garder TOUS les paragraphes non vides
+          
+          // Si on a un titre de chapitre, retirer les premiers paragraphes courts (< 30 car) qui sont probablement ce même titre
+          if (chapterTitle) {
+            while (paragraphs.length > 0 && paragraphs[0].length < 30) {
+              console.log('🗑️ Retrait titre dupliqué:', paragraphs[0]);
+              paragraphs.shift();
+            }
+          }
           
           if (paragraphs.length === 0) {
             console.log('⚠️ Pas de contenu');
@@ -1398,7 +1406,7 @@
                       <button class="delete-btn" onclick="event.stopPropagation();deleteBook('${book.id}')">${icon('trash', 'icon-sm')}</button>
                       <div class="book-cover">
                         ${book.cover ? 
-                          `<img src="${book.cover}" alt="${book.title}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;">` : 
+                          `<img src="${book.cover}" alt="${book.title}" style="width:100%;height:100%;object-fit:contain;border-radius:4px;">` : 
                           icon('book-open')
                         }
                       </div>
