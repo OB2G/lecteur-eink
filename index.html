@@ -498,7 +498,11 @@
       showSearch: false,
       isLoading: false,
       touchStart: null,
-      selectedText: '' // Stocker la sélection
+      selectedText: '', // Stocker la sélection
+      isSpeaking: false, // État de la lecture vocale
+      ttsAutoAdvance: false, // Flag pour auto-avancement TTS
+      speechSynth: window.speechSynthesis,
+      currentUtterance: null
     };
     
     function loadStorage(key, def) {
@@ -734,7 +738,7 @@
           const fullText = extractText(body);
           const paragraphs = fullText.split('\n\n')
             .map(p => p.trim())
-            .filter(p => p.length > 20);
+            .filter(p => p.length > 0);  // Garder TOUS les paragraphes non vides
           
           if (paragraphs.length === 0) {
             console.log('⚠️ Pas de contenu');
@@ -942,6 +946,13 @@
     
     function nextPage() {
       if (!app.currentBook || app.currentPage >= app.currentBook.content.length - 1) return;
+      
+      // Arrêter la lecture vocale si active (sauf si auto-avancée par TTS)
+      if (app.isSpeaking && !app.ttsAutoAdvance) {
+        stopTTS();
+      }
+      app.ttsAutoAdvance = false;
+      
       einkTransition(() => {
         app.currentPage++;
         app.bookProgress[app.currentBook.id] = { currentPage: app.currentPage, totalPages: app.currentBook.content.length };
@@ -953,6 +964,12 @@
     
     function prevPage() {
       if (app.currentPage <= 0) return;
+      
+      // Arrêter la lecture vocale si active
+      if (app.isSpeaking) {
+        stopTTS();
+      }
+      
       einkTransition(() => {
         app.currentPage--;
         app.bookProgress[app.currentBook.id] = { currentPage: app.currentPage, totalPages: app.currentBook.content.length };
@@ -1144,6 +1161,86 @@
     // Exposer la fonction globalement pour qu'elle soit accessible depuis le HTML
     window.deleteBookmark = deleteBookmark;
     
+    // ===== LECTURE VOCALE (TTS) =====
+    
+    function toggleTTS() {
+      if (!app.currentBook) {
+        alert('⚠️ Aucun livre ouvert');
+        return;
+      }
+      
+      if (app.isSpeaking) {
+        // Arrêter la lecture
+        stopTTS();
+      } else {
+        // Démarrer la lecture
+        startTTS();
+      }
+    }
+    
+    function startTTS() {
+      if (!app.currentBook || !app.speechSynth) return;
+      
+      // Arrêter toute lecture en cours
+      stopTTS();
+      
+      const pageText = app.currentBook.content[app.currentPage].text;
+      
+      // Créer une nouvelle utterance
+      const utterance = new SpeechSynthesisUtterance(pageText);
+      
+      // Configuration
+      utterance.lang = 'fr-FR';
+      utterance.rate = 1.0;  // Vitesse normale
+      utterance.pitch = 1.0;  // Ton normal
+      utterance.volume = 1.0; // Volume max
+      
+      // Quand la lecture se termine
+      utterance.onend = () => {
+        app.isSpeaking = false;
+        app.currentUtterance = null;
+        
+        // Auto-avancer à la page suivante
+        if (app.currentPage < app.currentBook.content.length - 1) {
+          app.ttsAutoAdvance = true;  // Flag pour ne pas arrêter TTS
+          nextPage();
+          // Continuer la lecture sur la nouvelle page
+          setTimeout(() => startTTS(), 500);
+        } else {
+          render();
+        }
+      };
+      
+      // En cas d'erreur
+      utterance.onerror = (e) => {
+        console.error('TTS error:', e);
+        app.isSpeaking = false;
+        app.currentUtterance = null;
+        render();
+      };
+      
+      // Démarrer la lecture
+      app.currentUtterance = utterance;
+      app.isSpeaking = true;
+      app.speechSynth.speak(utterance);
+      
+      render();
+    }
+    
+    function stopTTS() {
+      if (app.speechSynth) {
+        app.speechSynth.cancel();
+      }
+      app.isSpeaking = false;
+      app.currentUtterance = null;
+      render();
+    }
+    
+    // Exposer les fonctions TTS globalement
+    window.toggleTTS = toggleTTS;
+    window.startTTS = startTTS;
+    window.stopTTS = stopTTS;
+    
     function applySettings() {
       document.getElementById('app').style.filter = `brightness(${app.settings.lighting}%)`;
       document.getElementById('warmthOverlay').style.backgroundColor = 
@@ -1237,6 +1334,9 @@
           <div class="header">
             <button class="btn" onclick="closeBook()">${icon('chevron-left', 'icon-sm')} Bibliothèque</button>
             <div class="header-buttons">
+              <button class="icon-btn" onclick="toggleTTS()" title="Lecture vocale">
+                ${app.isSpeaking ? icon('pause-circle') : icon('volume-2')}
+              </button>
               <button class="icon-btn" onclick="app.showSearch=!app.showSearch;render();">${icon('search')}</button>
               <button class="icon-btn" onclick="toggleBookmark()">${icon('bookmark')}</button>
               <button class="icon-btn" onclick="app.showBookmarks=!app.showBookmarks;render();">
