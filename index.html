@@ -198,6 +198,13 @@
       margin-bottom: 0.75rem;
       opacity: 0.3;
     }
+    .book-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 4px;
+      opacity: 1;
+    }
     .book-title {
       font-weight: 600;
       font-size: 0.875rem;
@@ -825,17 +832,22 @@
             .map(p => p.trim())
             .filter(p => p.length > 0);  // Garder TOUS les paragraphes non vides
           
-          // Si on a un titre de chapitre, retirer les premiers paragraphes courts (< 30 car) qui sont probablement ce même titre
-          if (chapterTitle) {
-            while (paragraphs.length > 0 && paragraphs[0].length < 30) {
-              console.log('🗑️ Retrait titre dupliqué:', paragraphs[0]);
-              paragraphs.shift();
-            }
-          }
-          
           if (paragraphs.length === 0) {
             console.log('⚠️ Pas de contenu');
             continue;
+          }
+          
+          // SI ON A UN TITRE DE CHAPITRE, retirer UNIQUEMENT ce titre s'il apparaît en premier paragraphe
+          if (chapterTitle && paragraphs.length > 0) {
+            // Nettoyer le titre pour comparaison (enlever espaces, ponctuation)
+            const cleanTitle = chapterTitle.toLowerCase().trim();
+            const firstPara = paragraphs[0].toLowerCase().trim();
+            
+            // Si le premier paragraphe EST exactement le titre (ou le contient)
+            if (firstPara === cleanTitle || cleanTitle.includes(firstPara) || firstPara.includes(cleanTitle)) {
+              console.log('🗑️ Retrait titre dupliqué:', paragraphs[0]);
+              paragraphs.shift();
+            }
           }
           
           // Compter les mots
@@ -1406,7 +1418,7 @@
                       <button class="delete-btn" onclick="event.stopPropagation();deleteBook('${book.id}')">${icon('trash', 'icon-sm')}</button>
                       <div class="book-cover">
                         ${book.cover ? 
-                          `<img src="${book.cover}" alt="${book.title}" style="width:100%;height:100%;object-fit:contain;border-radius:4px;">` : 
+                          `<img src="${book.cover}" alt="${book.title}">` : 
                           icon('book-open')
                         }
                       </div>
