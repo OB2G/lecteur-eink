@@ -571,6 +571,71 @@
       console.log('Titre:', title);
       console.log('Auteur:', author);
       
+      // EXTRAIRE LA COUVERTURE
+      let coverImage = null;
+      
+      // Chercher la référence à la couverture dans les métadonnées
+      const coverMetaMatch = opf.match(/<meta\s+name=["']cover["']\s+content=["']([^"']+)["']/i);
+      
+      if (coverMetaMatch) {
+        const coverId = coverMetaMatch[1];
+        console.log('📷 Cover ID trouvé:', coverId);
+        
+        // Trouver le fichier correspondant dans le manifest
+        const coverItemMatch = opf.match(new RegExp(`<item\\s+id=["']${coverId}["'][^>]*href=["']([^"']+)["'][^>]*media-type=["']([^"']+)["']`, 'i'));
+        
+        if (coverItemMatch) {
+          const coverHref = coverItemMatch[1];
+          const coverType = coverItemMatch[2];
+          const coverPath = opfDir + coverHref;
+          
+          console.log('📷 Fichier couverture:', coverPath);
+          
+          // Extraire l'image
+          const coverFile = zip.file(coverPath);
+          if (coverFile) {
+            try {
+              const coverBlob = await coverFile.async('blob');
+              
+              // Convertir en base64
+              const reader = new FileReader();
+              coverImage = await new Promise((resolve, reject) => {
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(coverBlob);
+              });
+              
+              console.log('✅ Couverture extraite:', coverImage.substring(0, 50) + '...');
+            } catch (err) {
+              console.log('❌ Erreur extraction couverture:', err);
+            }
+          }
+        }
+      } else {
+        // Fallback: chercher des fichiers image communs
+        const commonCoverNames = ['cover.jpg', 'cover.jpeg', 'cover.png', 'cover1.jpeg', 'cover1.jpg'];
+        for (const name of commonCoverNames) {
+          const possiblePath = opfDir + name;
+          const coverFile = zip.file(possiblePath);
+          if (coverFile) {
+            console.log('📷 Couverture trouvée (fallback):', possiblePath);
+            try {
+              const coverBlob = await coverFile.async('blob');
+              const reader = new FileReader();
+              coverImage = await new Promise((resolve, reject) => {
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(coverBlob);
+              });
+              console.log('✅ Couverture extraite (fallback)');
+              break;
+            } catch (err) {
+              console.log('❌ Erreur extraction couverture (fallback):', err);
+            }
+          }
+        }
+      }
+      
       // LIRE LE TOC (toc.ncx) pour avoir les VRAIS titres de chapitres
       const tocFiles = Object.keys(zip.files).filter(n => n.endsWith('toc.ncx'));
       let chapterTitles = {};
@@ -845,7 +910,8 @@
         title, 
         author, 
         format: 'EPUB', 
-        content: allPages, 
+        content: allPages,
+        cover: coverImage, // Couverture en base64
         dateAdded: new Date().toISOString() 
       };
     }
@@ -1319,7 +1385,12 @@
                   return `
                     <div class="book-card">
                       <button class="delete-btn" onclick="event.stopPropagation();deleteBook('${book.id}')">${icon('trash', 'icon-sm')}</button>
-                      <div class="book-cover">${icon('book-open')}</div>
+                      <div class="book-cover">
+                        ${book.cover ? 
+                          `<img src="${book.cover}" alt="${book.title}" style="width:100%;height:100%;object-fit:cover;border-radius:4px;">` : 
+                          icon('book-open')
+                        }
+                      </div>
                       ${isStarted ? `<div class="progress-badge ${isFinished ? 'finished' : 'reading'}">
                         ${isFinished ? '✓ Terminé' : `En cours - ${pct}%`}
                       </div>` : ''}
