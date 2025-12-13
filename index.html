@@ -574,65 +574,76 @@
       // EXTRAIRE LA COUVERTURE
       let coverImage = null;
       
-      // Chercher la référence à la couverture dans les métadonnées
+      console.log('📷 Recherche de la couverture...');
+      
+      // Méthode 1 : Chercher via metadata cover
       const coverMetaMatch = opf.match(/<meta\s+name=["']cover["']\s+content=["']([^"']+)["']/i);
       
       if (coverMetaMatch) {
         const coverId = coverMetaMatch[1];
-        console.log('📷 Cover ID trouvé:', coverId);
+        console.log('📷 Cover ID:', coverId);
         
-        // Trouver le fichier correspondant dans le manifest
-        const coverItemMatch = opf.match(new RegExp(`<item\\s+id=["']${coverId}["'][^>]*href=["']([^"']+)["'][^>]*media-type=["']([^"']+)["']`, 'i'));
+        // Chercher l'item avec cet ID
+        const itemRegex = new RegExp(`<item[^>]+id=["']${coverId}["'][^>]+>`, 'i');
+        const itemMatch = opf.match(itemRegex);
         
-        if (coverItemMatch) {
-          const coverHref = coverItemMatch[1];
-          const coverType = coverItemMatch[2];
-          const coverPath = opfDir + coverHref;
-          
-          console.log('📷 Fichier couverture:', coverPath);
-          
-          // Extraire l'image
-          const coverFile = zip.file(coverPath);
-          if (coverFile) {
-            try {
-              const coverBlob = await coverFile.async('blob');
-              
-              // Convertir en base64
-              const reader = new FileReader();
-              coverImage = await new Promise((resolve, reject) => {
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(coverBlob);
-              });
-              
-              console.log('✅ Couverture extraite:', coverImage.substring(0, 50) + '...');
-            } catch (err) {
-              console.log('❌ Erreur extraction couverture:', err);
+        if (itemMatch) {
+          const hrefMatch = itemMatch[0].match(/href=["']([^"']+)["']/i);
+          if (hrefMatch) {
+            const coverHref = hrefMatch[1];
+            const coverPath = opfDir + coverHref;
+            console.log('📷 Chemin couverture:', coverPath);
+            
+            const coverFile = zip.file(coverPath);
+            if (coverFile) {
+              try {
+                const coverBlob = await coverFile.async('blob');
+                const reader = new FileReader();
+                coverImage = await new Promise((resolve, reject) => {
+                  reader.onload = () => resolve(reader.result);
+                  reader.onerror = reject;
+                  reader.readAsDataURL(coverBlob);
+                });
+                console.log('✅ Couverture extraite (metadata)');
+              } catch (err) {
+                console.log('❌ Erreur extraction:', err);
+              }
+            } else {
+              console.log('❌ Fichier couverture introuvable:', coverPath);
             }
           }
         }
-      } else {
-        // Fallback: chercher des fichiers image communs
-        const commonCoverNames = ['cover.jpg', 'cover.jpeg', 'cover.png', 'cover1.jpeg', 'cover1.jpg'];
-        for (const name of commonCoverNames) {
-          const possiblePath = opfDir + name;
-          const coverFile = zip.file(possiblePath);
-          if (coverFile) {
-            console.log('📷 Couverture trouvée (fallback):', possiblePath);
-            try {
-              const coverBlob = await coverFile.async('blob');
-              const reader = new FileReader();
-              coverImage = await new Promise((resolve, reject) => {
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(coverBlob);
-              });
-              console.log('✅ Couverture extraite (fallback)');
-              break;
-            } catch (err) {
-              console.log('❌ Erreur extraction couverture (fallback):', err);
-            }
+      }
+      
+      // Méthode 2 : Fallback - chercher des fichiers images courants
+      if (!coverImage) {
+        console.log('📷 Fallback: recherche fichiers courants...');
+        const imageFiles = Object.keys(zip.files).filter(name => 
+          /\.(jpe?g|png|gif|webp)$/i.test(name) && 
+          /cover/i.test(name)
+        );
+        
+        console.log('📷 Images trouvées:', imageFiles);
+        
+        if (imageFiles.length > 0) {
+          const coverPath = imageFiles[0];
+          console.log('📷 Utilisation de:', coverPath);
+          
+          try {
+            const coverFile = zip.file(coverPath);
+            const coverBlob = await coverFile.async('blob');
+            const reader = new FileReader();
+            coverImage = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(coverBlob);
+            });
+            console.log('✅ Couverture extraite (fallback)');
+          } catch (err) {
+            console.log('❌ Erreur extraction fallback:', err);
           }
+        } else {
+          console.log('⚠️ Aucune couverture trouvée');
         }
       }
       
