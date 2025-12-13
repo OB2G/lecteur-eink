@@ -751,6 +751,14 @@
           } else if (node.nodeType === 1) { // ELEMENT_NODE
             const tagName = node.tagName.toLowerCase();
             if (['script', 'style', 'meta', 'link'].includes(tagName)) continue;
+            
+            // IGNORER LES PARAGRAPHES DE TITRE (calibre_5, calibre_3, calibre_9)
+            const className = node.getAttribute('class') || '';
+            if (className.includes('calibre_5') || className.includes('calibre_3') || className.includes('calibre_9')) {
+              console.log('🗑️ Ignoré (titre):', node.textContent.trim());
+              continue;  // Sauter ce paragraphe
+            }
+            
             if (['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName)) {
               const extracted = extractText(node);
               if (extracted.trim()) text += extracted.trim() + '\n\n';
@@ -835,19 +843,6 @@
           if (paragraphs.length === 0) {
             console.log('⚠️ Pas de contenu');
             continue;
-          }
-          
-          // SI ON A UN TITRE DE CHAPITRE, retirer UNIQUEMENT ce titre s'il apparaît en premier paragraphe
-          if (chapterTitle && paragraphs.length > 0) {
-            // Nettoyer le titre pour comparaison (enlever espaces, ponctuation)
-            const cleanTitle = chapterTitle.toLowerCase().trim();
-            const firstPara = paragraphs[0].toLowerCase().trim();
-            
-            // Si le premier paragraphe EST exactement le titre (ou le contient)
-            if (firstPara === cleanTitle || cleanTitle.includes(firstPara) || firstPara.includes(cleanTitle)) {
-              console.log('🗑️ Retrait titre dupliqué:', paragraphs[0]);
-              paragraphs.shift();
-            }
           }
           
           // Compter les mots
