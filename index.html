@@ -751,6 +751,14 @@
           } else if (node.nodeType === 1) { // ELEMENT_NODE
             const tagName = node.tagName.toLowerCase();
             if (['script', 'style', 'meta', 'link'].includes(tagName)) continue;
+            
+            // IGNORER SEULEMENT calibre_5 (numéro de chapitre comme "1", "Prologue")
+            const className = node.getAttribute('class') || '';
+            if (className.includes('calibre_5')) {
+              console.log('🗑️ Ignoré (numéro chapitre):', node.textContent.trim());
+              continue;  // Sauter ce paragraphe
+            }
+            
             if (['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote'].includes(tagName)) {
               const extracted = extractText(node);
               if (extracted.trim()) text += extracted.trim() + '\n\n';
@@ -1517,6 +1525,8 @@
           <div class="reader-view">
             ${app.currentBook ? `
               <div class="reader-content">
+                ${app.currentBook.content[app.currentPage].isFirstPageOfChapter ? 
+                  `<div class="chapter-title">${app.currentBook.content[app.currentPage].chapter}</div>` : ''}
                 <div class="text-content" style="font-size:${app.settings.fontSize}px;line-height:${app.settings.lineHeight};">
                   ${app.currentBook.content[app.currentPage].text.split('\n\n').map(p => `<p>${p}</p>`).join('')}
                 </div>
